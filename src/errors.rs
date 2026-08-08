@@ -32,3 +32,37 @@ impl Display for LoadError {
         write!(f, "{}", self.cause)
     }
 }
+
+#[derive(Debug)]
+#[cfg(feature = "tokenizers")]
+pub struct TokenizationError {
+    pub cause: String,
+}
+
+#[cfg(feature = "tokenizers")]
+impl std::error::Error for TokenizationError {}
+
+#[cfg(feature = "tokenizers")]
+impl Display for TokenizationError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.cause)
+    }
+}
+
+#[derive(Debug)]
+pub struct InvalidModelOrPathError {
+    pub model_or_path: String,
+    pub details: String,
+}
+
+impl Display for InvalidModelOrPathError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "Invalid model or path to load the model: {}.\n{}",
+            self.model_or_path, self.details
+        )
+    }
+}
+
+impl std::error::Error for InvalidModelOrPathError {}

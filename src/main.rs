@@ -1,7 +1,6 @@
-use statemebed::load::load_safetensors_file;
+use statemebed::StaticEmbedding;
 
 fn main() {
-    let path = "testfiles/model.safetensors";
-    let (header, tensor) = load_safetensors_file(path).expect("Should load file");
-    println!("{:#?}\n{:?}", header, tensor.len());
+    let _ = StaticEmbedding::from_dir("/Users/clee/.statembed/minishlab--potion-code-16M")
+        .expect("Should download the model");
 }

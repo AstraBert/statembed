@@ -1,4 +1,4 @@
-use std::fs::File;
+use std::{fs::File, path::PathBuf};
 
 use crate::errors::LoadError;
 use memmap2::Mmap;
@@ -16,6 +16,23 @@ pub enum DataType {
     I8,
     U8,
     BOOL,
+}
+
+impl DataType {
+    pub fn to_size(&self) -> usize {
+        match self {
+            Self::BF16 => 2,
+            Self::F32 => 4,
+            Self::F64 => 8,
+            Self::BOOL => 1,
+            Self::I16 => 2,
+            Self::I32 => 4,
+            Self::I8 => 1,
+            Self::I64 => 8,
+            Self::U8 => 1,
+            Self::F16 => 2,
+        }
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, Copy)]
@@ -40,8 +57,10 @@ fn header_to_details(header: &[u8]) -> Result<TensorDetails, LoadError> {
     })
 }
 
-pub fn load_safetensors_file(path: &str) -> Result<(TensorDetails, Vec<u8>), LoadError> {
-    let file = File::open(path)?;
+pub fn load_safetensors_file(
+    path: impl Into<PathBuf>,
+) -> Result<(TensorDetails, Vec<u8>), LoadError> {
+    let file = File::open(path.into())?;
     let mmap = unsafe { Mmap::map(&file)? };
     let (header_size_bytes, rest) = mmap.split_at(size_of::<u64>());
     let header_size = u64::from_le_bytes(header_size_bytes.try_into().map_err(|e| LoadError {
