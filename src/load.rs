@@ -48,8 +48,10 @@ fn header_to_details(header: &[u8]) -> Result<TensorDetails, LoadError> {
         if k == "__metadata__" {
             continue;
         }
-        let details: TensorDetails = serde_json::from_value(v)?;
-        return Ok(details);
+        match serde_json::from_value::<TensorDetails>(v) {
+            Ok(td) => return Ok(td),
+            Err(_) => continue,
+        }
     }
 
     Err(LoadError {

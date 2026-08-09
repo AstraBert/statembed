@@ -66,3 +66,29 @@ impl Display for InvalidModelOrPathError {
 }
 
 impl std::error::Error for InvalidModelOrPathError {}
+
+#[derive(Debug)]
+pub struct EmbedError {
+    pub cause: String,
+}
+
+impl From<LoadError> for EmbedError {
+    fn from(value: LoadError) -> Self {
+        Self { cause: value.cause }
+    }
+}
+
+#[cfg(feature = "tokenizers")]
+impl From<TokenizationError> for EmbedError {
+    fn from(value: TokenizationError) -> Self {
+        Self { cause: value.cause }
+    }
+}
+
+impl Display for EmbedError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.cause)
+    }
+}
+
+impl std::error::Error for EmbedError {}
