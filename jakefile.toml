@@ -1,0 +1,4 @@
+build="cargo build --release"
+test="cargo test --release"
+test-rayon="cargo test --feature rayon --release"
+test-hf="cargo test --feature hf-hub"
