@@ -27,6 +27,8 @@ pub const DOWNLOAD_FILES: &[&str] = &["model.safetensors", "tokenizer.json"];
 #[cfg(feature = "hf-hub")]
 pub static HF_CACHE_DIR: OnceLock<PathBuf> = OnceLock::new();
 
+pub const PARALLELIZATION_THRESHOLD: u64 = 100_000;
+
 #[cfg(feature = "hf-hub")]
 pub fn hf_cache_dir() -> &'static PathBuf {
     HF_CACHE_DIR.get_or_init(|| {
@@ -34,6 +36,76 @@ pub fn hf_cache_dir() -> &'static PathBuf {
             .expect("No home dir could be found for the current environment")
             .join(".statembed")
     })
+}
+
+fn decode(chunk: &[u8], dtype: DataType) -> Result<f32, EmbedError> {
+    let fl = match dtype {
+        DataType::BF16 => half::bf16::from_le_bytes(chunk.try_into().map_err(|e| EmbedError {
+            cause: format!("Bytes to BF16 conversion error: {}", e),
+        })?)
+        .to_f32(),
+        DataType::BOOL => {
+            let val = unsafe { *chunk.get_unchecked(0) };
+            val as f32
+        }
+        DataType::F32 => f32::from_le_bytes(chunk.try_into().map_err(|e| EmbedError {
+            cause: format!("Bytes to F32 conversion error: {}", e),
+        })?),
+        DataType::F64 => f64::from_le_bytes(chunk.try_into().map_err(|e| EmbedError {
+            cause: format!("Bytes to F64 conversion error: {}", e),
+        })?) as f32,
+        DataType::F16 => half::f16::from_le_bytes(chunk.try_into().map_err(|e| EmbedError {
+            cause: format!("Bytes to F16 conversion error: {}", e),
+        })?)
+        .to_f32(),
+        DataType::I16 => i16::from_le_bytes(chunk.try_into().map_err(|e| EmbedError {
+            cause: format!("Bytes to I16 conversion error: {}", e),
+        })?) as f32,
+        DataType::I32 => i32::from_le_bytes(chunk.try_into().map_err(|e| EmbedError {
+            cause: format!("Bytes to I32 conversion error: {}", e),
+        })?) as f32,
+        DataType::I64 => i64::from_le_bytes(chunk.try_into().map_err(|e| EmbedError {
+            cause: format!("Bytes to I64 conversion error: {}", e),
+        })?) as f32,
+        DataType::I8 => i8::from_le_bytes(chunk.try_into().map_err(|e| EmbedError {
+            cause: format!("Bytes to I8 conversion error: {}", e),
+        })?) as f32,
+        DataType::U8 => {
+            let val = unsafe { *chunk.get_unchecked(0) };
+            val as f32
+        }
+    };
+    Ok(fl)
+}
+
+fn sequential_mean_pooling(
+    tensor: &[u8],
+    tokens: Vec<u32>,
+    dim: u64,
+    dtype: DataType,
+    dtype_size: usize,
+) -> Result<Vec<f32>, EmbedError> {
+    let dim_usize = dim as usize;
+    let n = tokens.len() as f32;
+    let mut mean_pooled: Vec<f32> = vec![0f32; dim_usize];
+
+    for tok in tokens {
+        let start = (tok as u64) * dim * (dtype_size as u64);
+        let finish = start + (dim * (dtype_size as u64));
+        let tok_repr = &tensor[(start as usize)..(finish as usize)];
+        for (j, tr) in tok_repr.chunks(dtype_size).enumerate() {
+            let fl = decode(tr, dtype)?;
+            unsafe {
+                *mean_pooled.get_unchecked_mut(j) += fl;
+            }
+        }
+    }
+
+    for x in &mut mean_pooled {
+        *x /= n;
+    }
+
+    Ok(mean_pooled)
 }
 
 pub struct StaticEmbedding {
@@ -152,82 +224,9 @@ impl StaticEmbedding {
             };
             #[cfg(not(feature = "rayon"))]
             {
-                let mut vectors: Vec<Vec<f32>> = Vec::with_capacity(tokens.len());
+                let mut mean_pooled: Vec<f32> =
+                    sequential_mean_pooling(t, tokens, dim, dtype, dtype_size)?;
 
-                for tok in tokens {
-                    let start = (tok as u64) * dim * (dtype_size as u64);
-                    let finish = start + (dim * (dtype_size as u64));
-                    let tok_repr = &t[(start as usize)..(finish as usize)];
-                    let mut tok_vec: Vec<f32> = Vec::with_capacity(dim as usize);
-                    for tr in tok_repr.chunks(dtype_size) {
-                        let fl = match dtype {
-                            DataType::BF16 => {
-                                half::bf16::from_le_bytes(tr.try_into().map_err(|e| {
-                                    EmbedError {
-                                        cause: format!("Bytes to BF16 conversion error: {}", e),
-                                    }
-                                })?)
-                                .to_f32()
-                            }
-                            DataType::BOOL => {
-                                let val = unsafe { *tr.get_unchecked(0) };
-                                val as f32
-                            }
-                            DataType::F32 => {
-                                f32::from_le_bytes(tr.try_into().map_err(|e| EmbedError {
-                                    cause: format!("Bytes to F32 conversion error: {}", e),
-                                })?)
-                            }
-                            DataType::F64 => {
-                                f64::from_le_bytes(tr.try_into().map_err(|e| EmbedError {
-                                    cause: format!("Bytes to F64 conversion error: {}", e),
-                                })?) as f32
-                            }
-                            DataType::F16 => {
-                                half::f16::from_le_bytes(tr.try_into().map_err(|e| EmbedError {
-                                    cause: format!("Bytes to F16 conversion error: {}", e),
-                                })?)
-                                .to_f32()
-                            }
-                            DataType::I16 => {
-                                i16::from_le_bytes(tr.try_into().map_err(|e| EmbedError {
-                                    cause: format!("Bytes to I16 conversion error: {}", e),
-                                })?) as f32
-                            }
-                            DataType::I32 => {
-                                i32::from_le_bytes(tr.try_into().map_err(|e| EmbedError {
-                                    cause: format!("Bytes to I32 conversion error: {}", e),
-                                })?) as f32
-                            }
-                            DataType::I64 => {
-                                i64::from_le_bytes(tr.try_into().map_err(|e| EmbedError {
-                                    cause: format!("Bytes to I64 conversion error: {}", e),
-                                })?) as f32
-                            }
-                            DataType::I8 => {
-                                i8::from_le_bytes(tr.try_into().map_err(|e| EmbedError {
-                                    cause: format!("Bytes to I8 conversion error: {}", e),
-                                })?) as f32
-                            }
-                            DataType::U8 => {
-                                let val = unsafe { *tr.get_unchecked(0) };
-                                val as f32
-                            }
-                        };
-                        tok_vec.push(fl);
-                    }
-                    vectors.push(tok_vec);
-                }
-
-                let mut mean_pooled: Vec<f32> = Vec::with_capacity(dim as usize);
-                for j in 0..(dim as usize) {
-                    let mut summed: f32 = 0_f32;
-                    for v in vectors.as_slice() {
-                        let f = unsafe { *v.get_unchecked(j) };
-                        summed += f;
-                    }
-                    mean_pooled.push(summed / vectors.len() as f32);
-                }
                 if self.normalize {
                     let norm = mean_pooled
                         .iter()
@@ -243,86 +242,39 @@ impl StaticEmbedding {
             }
             #[cfg(feature = "rayon")]
             {
-                let vectors = tokens
-                    .par_iter()
-                    .map(|tok| {
-                        let start = (*tok as u64) * dim * (dtype_size as u64);
-                        let finish = start + (dim * (dtype_size as u64));
-                        let tok_repr = &t[(start as usize)..(finish as usize)];
-                        let mut tok_vec: Vec<f32> = Vec::with_capacity(dim as usize);
-                        for tr in tok_repr.chunks(dtype_size) {
-                            let fl = match dtype {
-                                DataType::BF16 => {
-                                    half::bf16::from_le_bytes(tr.try_into().map_err(|e| {
-                                        EmbedError {
-                                            cause: format!("Bytes to BF16 conversion error: {}", e),
-                                        }
-                                    })?)
-                                    .to_f32()
+                let dim_usize = dim as usize;
+                let mut mean_pooled = if tokens.len() as u64 * dim > PARALLELIZATION_THRESHOLD {
+                    let mut int_mean_pooled = tokens
+                        .par_iter()
+                        .fold(
+                            || vec![0f32; dim_usize],
+                            |mut acc, tok| {
+                                let start = (*tok as u64) * dim * (dtype_size as u64);
+                                let finish = start + (dim * (dtype_size as u64));
+                                let tok_repr = &t[(start as usize)..(finish as usize)];
+                                for (j, chunk) in tok_repr.chunks(dtype_size).enumerate() {
+                                    acc[j] += decode(chunk, dtype)
+                                        .expect("Should be able to decode the chunk to f32");
                                 }
-                                DataType::BOOL => {
-                                    let val = unsafe { *tr.get_unchecked(0) };
-                                    val as f32
+                                acc
+                            },
+                        )
+                        .reduce(
+                            || vec![0f32; dim_usize],
+                            |mut a, b| {
+                                for i in 0..dim_usize {
+                                    a[i] += b[i];
                                 }
-                                DataType::F32 => {
-                                    f32::from_le_bytes(tr.try_into().map_err(|e| EmbedError {
-                                        cause: format!("Bytes to F32 conversion error: {}", e),
-                                    })?)
-                                }
-                                DataType::F64 => {
-                                    f64::from_le_bytes(tr.try_into().map_err(|e| EmbedError {
-                                        cause: format!("Bytes to F64 conversion error: {}", e),
-                                    })?) as f32
-                                }
-                                DataType::F16 => {
-                                    half::f16::from_le_bytes(tr.try_into().map_err(|e| {
-                                        EmbedError {
-                                            cause: format!("Bytes to F16 conversion error: {}", e),
-                                        }
-                                    })?)
-                                    .to_f32()
-                                }
-                                DataType::I16 => {
-                                    i16::from_le_bytes(tr.try_into().map_err(|e| EmbedError {
-                                        cause: format!("Bytes to I16 conversion error: {}", e),
-                                    })?) as f32
-                                }
-                                DataType::I32 => {
-                                    i32::from_le_bytes(tr.try_into().map_err(|e| EmbedError {
-                                        cause: format!("Bytes to I32 conversion error: {}", e),
-                                    })?) as f32
-                                }
-                                DataType::I64 => {
-                                    i64::from_le_bytes(tr.try_into().map_err(|e| EmbedError {
-                                        cause: format!("Bytes to F16 conversion error: {}", e),
-                                    })?) as f32
-                                }
-                                DataType::I8 => {
-                                    i8::from_le_bytes(tr.try_into().map_err(|e| EmbedError {
-                                        cause: format!("Bytes to I8 conversion error: {}", e),
-                                    })?) as f32
-                                }
-                                DataType::U8 => {
-                                    let val = unsafe { *tr.get_unchecked(0) };
-                                    val as f32
-                                }
-                            };
-                            tok_vec.push(fl);
-                        }
-                        Ok(tok_vec)
-                    })
-                    .collect::<Result<Vec<Vec<f32>>, EmbedError>>()?;
-                let mean_pooled: Vec<f32> = (0..(dim as usize))
-                    .into_par_iter()
-                    .map(|j| {
-                        let mut summed: f32 = 0_f32;
-                        for v in vectors.as_slice() {
-                            let f = unsafe { *v.get_unchecked(j) };
-                            summed += f;
-                        }
-                        summed / vectors.len() as f32
-                    })
-                    .collect();
+                                a
+                            },
+                        );
+                    for x in &mut int_mean_pooled {
+                        *x /= tokens.len() as f32;
+                    }
+                    int_mean_pooled
+                } else {
+                    sequential_mean_pooling(t, tokens, dim, dtype, dtype_size)?
+                };
                 if self.normalize {
                     let norm = mean_pooled
                         .iter()

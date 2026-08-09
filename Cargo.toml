@@ -24,5 +24,9 @@ model2vec-rs = "0.2"
 criterion = { version = "0.8", features = ["html_reports"] }
 
 [[bench]]
-name = "no_rayon"
+name = "embed_benchmark"
+harness = false
+
+[[bench]]
+name = "m2vec_benchmark"
 harness = false
