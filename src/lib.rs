@@ -39,13 +39,21 @@ pub fn hf_cache_dir() -> &'static PathBuf {
 pub struct StaticEmbedding {
     pub base_path: PathBuf,
     pub tensor_details: Option<TensorDetails>,
+    pub normalize: bool,
     tensor: Option<Vec<u8>>,
     #[cfg(feature = "tokenizers")]
     tokenizer: Option<Tokenizer>,
+    #[cfg(feature = "tokenizers")]
+    median_token_length: Option<usize>,
+    #[cfg(feature = "tokenizers")]
+    unknown_token: Option<u32>,
 }
 
 impl StaticEmbedding {
-    pub fn from_dir<T: AsRef<Path>>(path: T) -> Result<Self, InvalidModelOrPathError> {
+    pub fn from_dir<T: AsRef<Path>>(
+        path: T,
+        normalize: Option<bool>,
+    ) -> Result<Self, InvalidModelOrPathError> {
         let p: &Path = path.as_ref();
         if !p.join("model.safetensors").exists() {
             return Err(InvalidModelOrPathError {
@@ -64,14 +72,20 @@ impl StaticEmbedding {
 
         Ok(Self {
             base_path: p.to_owned(),
+            normalize: normalize.unwrap_or_default(),
             tokenizer: None,
             tensor: None,
             tensor_details: None,
+            median_token_length: None,
+            unknown_token: None,
         })
     }
 
     #[cfg(feature = "hf-hub")]
-    pub async fn from_hf_hub(model_id: &str) -> Result<Self, InvalidModelOrPathError> {
+    pub async fn from_hf_hub(
+        model_id: &str,
+        normalize: Option<bool>,
+    ) -> Result<Self, InvalidModelOrPathError> {
         let client = HFClient::new().map_err(|e| InvalidModelOrPathError {
             model_or_path: model_id.to_string(),
             details: format!("Could not load HF client. Error: {}", e),
@@ -93,9 +107,12 @@ impl StaticEmbedding {
             }
             return Ok(Self {
                 base_path,
+                normalize: normalize.unwrap_or_default(),
                 tokenizer: None,
                 tensor: None,
                 tensor_details: None,
+                median_token_length: None,
+                unknown_token: None,
             });
         }
 
@@ -114,8 +131,13 @@ impl StaticEmbedding {
 
     #[cfg(feature = "tokenizers")]
     fn load_tokenizer(&mut self) -> Result<(), TokenizationError> {
+        use crate::tokenize::extract_tokenizer_details;
+
         let tokenizer = load_tokenizer(self.base_path.join("tokenizer.json"))?;
+        let (median_length, unk_tok) = extract_tokenizer_details(&tokenizer)?;
         self.tokenizer = Some(tokenizer);
+        self.median_token_length = Some(median_length);
+        self.unknown_token = unk_tok;
         Ok(())
     }
 
@@ -206,6 +228,17 @@ impl StaticEmbedding {
                     }
                     mean_pooled.push(summed / vectors.len() as f32);
                 }
+                if self.normalize {
+                    let norm = mean_pooled
+                        .iter()
+                        .map(|&v| v * v)
+                        .sum::<f32>()
+                        .sqrt()
+                        .max(1e-12);
+                    for x in &mut mean_pooled {
+                        *x /= norm;
+                    }
+                }
                 return Ok(mean_pooled);
             }
             #[cfg(feature = "rayon")]
@@ -290,6 +323,17 @@ impl StaticEmbedding {
                         summed / vectors.len() as f32
                     })
                     .collect();
+                if self.normalize {
+                    let norm = mean_pooled
+                        .iter()
+                        .map(|&v| v * v)
+                        .sum::<f32>()
+                        .sqrt()
+                        .max(1e-12);
+                    for x in &mut mean_pooled {
+                        *x /= norm;
+                    }
+                }
                 return Ok(mean_pooled);
             }
         }
@@ -299,12 +343,27 @@ impl StaticEmbedding {
     }
 
     #[cfg(feature = "tokenizers")]
-    pub fn embed_text(&mut self, text: &str) -> Result<Vec<f32>, EmbedError> {
+    fn truncate_input<'a>(&'a self, text: &'a str, max_token_length: usize) -> &'a str {
+        text.char_indices()
+            .nth(max_token_length.saturating_mul(self.median_token_length.unwrap()))
+            .map_or(text, |(byte_idx, _)| &text[..byte_idx])
+    }
+
+    #[cfg(feature = "tokenizers")]
+    pub fn embed_text(
+        &mut self,
+        input_text: &str,
+        max_token_length: Option<usize>,
+    ) -> Result<Vec<f32>, EmbedError> {
         if self.tokenizer.is_none() {
             self.load_tokenizer()?;
         }
+        let text = match max_token_length {
+            Some(m) => self.truncate_input(input_text, m),
+            None => input_text,
+        };
         if let Some(tk) = self.tokenizer.as_ref() {
-            let tokens = tokenize(tk, text)?;
+            let tokens = tokenize(tk, text, self.unknown_token)?;
             let embedding = self.embed_tokens(tokens)?;
             return Ok(embedding);
         }
