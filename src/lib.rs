@@ -4,8 +4,7 @@ use crate::tokenize::tokenize;
 use crate::{errors::TokenizationError, tokenize::load_tokenizer};
 #[cfg(feature = "hf-hub")]
 use hf_hub::{HFClient, RepoTypeModel};
-#[cfg(feature = "rayon")]
-use rayon::prelude::*;
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 #[cfg(feature = "hf-hub")]
 use std::sync::OnceLock;
@@ -84,21 +83,33 @@ fn sequential_mean_pooling(
     dim: u64,
     dtype: DataType,
     dtype_size: usize,
+    token_map: &mut HashMap<u32, Vec<f32>>,
 ) -> Result<Vec<f32>, EmbedError> {
     let dim_usize = dim as usize;
     let n = tokens.len() as f32;
     let mut mean_pooled: Vec<f32> = vec![0f32; dim_usize];
 
     for tok in tokens {
+        if token_map.contains_key(&tok) {
+            for (j, fl) in token_map[&tok].iter().enumerate() {
+                unsafe {
+                    *mean_pooled.get_unchecked_mut(j) += fl;
+                }
+            }
+            continue;
+        }
         let start = (tok as u64) * dim * (dtype_size as u64);
         let finish = start + (dim * (dtype_size as u64));
         let tok_repr = &tensor[(start as usize)..(finish as usize)];
+        let mut decoded: Vec<f32> = Vec::with_capacity(dim_usize);
         for (j, tr) in tok_repr.chunks(dtype_size).enumerate() {
             let fl = decode(tr, dtype)?;
+            decoded.push(fl);
             unsafe {
                 *mean_pooled.get_unchecked_mut(j) += fl;
             }
         }
+        token_map.insert(tok, decoded);
     }
 
     for x in &mut mean_pooled {
@@ -119,6 +130,7 @@ pub struct StaticEmbedding {
     median_token_length: Option<usize>,
     #[cfg(feature = "tokenizers")]
     unknown_token: Option<u32>,
+    token_map: HashMap<u32, Vec<f32>>,
 }
 
 impl StaticEmbedding {
@@ -150,6 +162,7 @@ impl StaticEmbedding {
             tensor_details: None,
             median_token_length: None,
             unknown_token: None,
+            token_map: HashMap::new(),
         })
     }
 
@@ -185,6 +198,7 @@ impl StaticEmbedding {
                 tensor_details: None,
                 median_token_length: None,
                 unknown_token: None,
+                token_map: HashMap::new(),
             });
         }
 
@@ -222,72 +236,21 @@ impl StaticEmbedding {
                 let td = self.tensor_details.unwrap();
                 (td.dtype, td.dtype.to_size(), td.shape[1])
             };
-            #[cfg(not(feature = "rayon"))]
-            {
-                let mut mean_pooled: Vec<f32> =
-                    sequential_mean_pooling(t, tokens, dim, dtype, dtype_size)?;
+            let mut mean_pooled: Vec<f32> =
+                sequential_mean_pooling(t, tokens, dim, dtype, dtype_size, &mut self.token_map)?;
 
-                if self.normalize {
-                    let norm = mean_pooled
-                        .iter()
-                        .map(|&v| v * v)
-                        .sum::<f32>()
-                        .sqrt()
-                        .max(1e-12);
-                    for x in &mut mean_pooled {
-                        *x /= norm;
-                    }
+            if self.normalize {
+                let norm = mean_pooled
+                    .iter()
+                    .map(|&v| v * v)
+                    .sum::<f32>()
+                    .sqrt()
+                    .max(1e-12);
+                for x in &mut mean_pooled {
+                    *x /= norm;
                 }
-                return Ok(mean_pooled);
             }
-            #[cfg(feature = "rayon")]
-            {
-                let dim_usize = dim as usize;
-                let mut mean_pooled = if tokens.len() as u64 * dim > PARALLELIZATION_THRESHOLD {
-                    let mut int_mean_pooled = tokens
-                        .par_iter()
-                        .fold(
-                            || vec![0f32; dim_usize],
-                            |mut acc, tok| {
-                                let start = (*tok as u64) * dim * (dtype_size as u64);
-                                let finish = start + (dim * (dtype_size as u64));
-                                let tok_repr = &t[(start as usize)..(finish as usize)];
-                                for (j, chunk) in tok_repr.chunks(dtype_size).enumerate() {
-                                    acc[j] += decode(chunk, dtype)
-                                        .expect("Should be able to decode the chunk to f32");
-                                }
-                                acc
-                            },
-                        )
-                        .reduce(
-                            || vec![0f32; dim_usize],
-                            |mut a, b| {
-                                for i in 0..dim_usize {
-                                    a[i] += b[i];
-                                }
-                                a
-                            },
-                        );
-                    for x in &mut int_mean_pooled {
-                        *x /= tokens.len() as f32;
-                    }
-                    int_mean_pooled
-                } else {
-                    sequential_mean_pooling(t, tokens, dim, dtype, dtype_size)?
-                };
-                if self.normalize {
-                    let norm = mean_pooled
-                        .iter()
-                        .map(|&v| v * v)
-                        .sum::<f32>()
-                        .sqrt()
-                        .max(1e-12);
-                    for x in &mut mean_pooled {
-                        *x /= norm;
-                    }
-                }
-                return Ok(mean_pooled);
-            }
+            return Ok(mean_pooled);
         }
         Err(EmbedError {
             cause: "Tensor should be non-null at this point".to_string(),

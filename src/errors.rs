@@ -76,7 +76,7 @@ impl Display for InvalidModelOrPathError {
 
 impl std::error::Error for InvalidModelOrPathError {}
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct EmbedError {
     pub cause: String,
 }

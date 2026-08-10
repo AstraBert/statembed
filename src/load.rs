@@ -4,7 +4,7 @@ use crate::errors::LoadError;
 use memmap2::Mmap;
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Serialize, Deserialize, Clone, Copy)]
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, Eq, PartialEq, Hash)]
 pub enum DataType {
     F64,
     F32,
