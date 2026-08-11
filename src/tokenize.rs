@@ -49,3 +49,33 @@ pub fn extract_tokenizer_details(
 
     Ok((median_token_length, unk_token_id))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    #[cfg(feature = "tokenizers")]
+    fn test_load_tokenizer() {
+        let _ = load_tokenizer("testfiles/tokenizer.json").expect("Should not fail");
+    }
+
+    #[test]
+    #[cfg(feature = "tokenizers")]
+    fn test_extract_tokenizer_details() {
+        let (expected_median_len, expected_unk_token) = (6, Some(1));
+        let tok = load_tokenizer("testfiles/tokenizer.json").expect("Should load tokenizer");
+        let (median_len, unk_token) =
+            extract_tokenizer_details(&tok).expect("Should be able to extract tokenizer details");
+        assert_eq!(expected_median_len, median_len);
+        assert_eq!(expected_unk_token, unk_token);
+    }
+
+    #[test]
+    #[cfg(feature = "tokenizers")]
+    fn test_tokenize() {
+        let tok = load_tokenizer("testfiles/tokenizer.json").expect("Should load tokenizer");
+        let tokens = tokenize(&tok, "hello", Some(1)).expect("Should tokenize successfully");
+        assert_eq!(tokens[0], 6598);
+    }
+}

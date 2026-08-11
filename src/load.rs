@@ -35,7 +35,7 @@ impl DataType {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone, Copy)]
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, Eq, PartialEq)]
 pub struct TensorDetails {
     pub dtype: DataType,
     pub shape: [u64; 2],
@@ -73,4 +73,26 @@ pub fn load_safetensors_file(
     let tensor =
         &rest_tensor[(details.data_offsets[0] as usize)..(details.data_offsets[1] as usize)];
     Ok((details, tensor.to_vec()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_load_safetensors() {
+        let (details, tensor) = load_safetensors_file("testfiles/model.safetensors")
+            .expect("Should be able to load the safetensors model");
+        // expected header: {"embeddings":{"dtype":"F32","shape":[29528,256],"data_offsets":[0,30236672]}}
+        let expected_details = TensorDetails {
+            data_offsets: [0, 30236672],
+            shape: [29528, 256],
+            dtype: DataType::F32,
+        };
+        assert_eq!(details, expected_details);
+        assert_eq!(
+            tensor.len() as u64,
+            expected_details.data_offsets[1] - expected_details.data_offsets[0]
+        );
+    }
 }
