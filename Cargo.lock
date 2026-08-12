@@ -2745,6 +2745,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tokenizers 0.23.1",
+ "tokio",
 ]
 
 [[package]]

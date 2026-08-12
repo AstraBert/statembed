@@ -26,8 +26,6 @@ pub const DOWNLOAD_FILES: &[&str] = &["model.safetensors", "tokenizer.json"];
 #[cfg(feature = "hf-hub")]
 pub static HF_CACHE_DIR: OnceLock<PathBuf> = OnceLock::new();
 
-pub const PARALLELIZATION_THRESHOLD: u64 = 100_000;
-
 #[cfg(feature = "hf-hub")]
 pub fn hf_cache_dir() -> &'static PathBuf {
     HF_CACHE_DIR.get_or_init(|| {
@@ -147,6 +145,7 @@ impl StaticEmbedding {
             });
         }
 
+        #[cfg(feature = "tokenizers")]
         if !p.join("tokenizer.json").exists() {
             return Err(InvalidModelOrPathError {
                 model_or_path: p.to_string_lossy().to_string(),
@@ -157,10 +156,13 @@ impl StaticEmbedding {
         Ok(Self {
             base_path: p.to_owned(),
             normalize: normalize.unwrap_or_default(),
+            #[cfg(feature = "tokenizers")]
             tokenizer: None,
             tensor: None,
             tensor_details: None,
+            #[cfg(feature = "tokenizers")]
             median_token_length: None,
+            #[cfg(feature = "tokenizers")]
             unknown_token: None,
             token_map: HashMap::new(),
         })
@@ -170,6 +172,7 @@ impl StaticEmbedding {
     pub async fn from_hf_hub(
         model_id: &str,
         normalize: Option<bool>,
+        force_download: bool,
     ) -> Result<Self, InvalidModelOrPathError> {
         let client = HFClient::new().map_err(|e| InvalidModelOrPathError {
             model_or_path: model_id.to_string(),
@@ -180,6 +183,10 @@ impl StaticEmbedding {
             let repo = client.repository(RepoTypeModel, owner, name);
             let base_path = hf_cache_dir().join(model_id.replace("/", "--"));
             for f in DOWNLOAD_FILES {
+                // skip downloading if already there, unless we want to forcibly re-download
+                if base_path.join(f).exists() && !force_download {
+                    continue;
+                }
                 repo.download_file()
                     .filename(f.to_string())
                     .local_dir(&base_path)
@@ -193,10 +200,13 @@ impl StaticEmbedding {
             return Ok(Self {
                 base_path,
                 normalize: normalize.unwrap_or_default(),
+                #[cfg(feature = "tokenizers")]
                 tokenizer: None,
                 tensor: None,
                 tensor_details: None,
+                #[cfg(feature = "tokenizers")]
                 median_token_length: None,
+                #[cfg(feature = "tokenizers")]
                 unknown_token: None,
                 token_map: HashMap::new(),
             });
@@ -260,6 +270,10 @@ impl StaticEmbedding {
     #[cfg(feature = "tokenizers")]
     fn truncate_input<'a>(&'a self, text: &'a str, max_token_length: usize) -> &'a str {
         text.char_indices()
+            // median_token_length is always guaranteed to be non-null,
+            // it just needs to be null for initialization.
+            // For all the callsites of this methods, median_token_length
+            // has already been assigned to a non-null value and thus can be unwrapped safely
             .nth(max_token_length.saturating_mul(self.median_token_length.unwrap()))
             .map_or(text, |(byte_idx, _)| &text[..byte_idx])
     }
@@ -285,5 +299,132 @@ impl StaticEmbedding {
         Err(EmbedError {
             cause: "Tokenizer should be non-null at this point".to_string(),
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_load_from_directory() {
+        let _ = StaticEmbedding::from_dir("testfiles/", None)
+            .expect("Should be able to load model from testfiles");
+    }
+
+    #[test]
+    fn test_load_tensor() {
+        let mut model = StaticEmbedding::from_dir("testfiles/", None)
+            .expect("Should be able to load model from testfiles");
+        model.load_tensor().expect("Should be able to load tensor");
+        assert!(model.tensor.is_some());
+    }
+
+    #[test]
+    #[cfg(feature = "tokenizers")]
+    fn test_load_tokenizer() {
+        let mut model = StaticEmbedding::from_dir("testfiles/", None)
+            .expect("Should be able to load model from testfiles");
+        model
+            .load_tokenizer()
+            .expect("Should be able to load tokenizer");
+        assert!(model.tokenizer.is_some());
+        assert!(model.unknown_token.is_some());
+        assert!(model.median_token_length.is_some());
+    }
+
+    #[test]
+    fn test_decode_succeeds_for_all_dtypes() {
+        // BF16: 1.0 in bf16 le bytes
+        let bf16_bytes = half::bf16::from_f32(1.0).to_le_bytes();
+        assert_eq!(decode(&bf16_bytes, DataType::BF16).unwrap(), 1.0);
+
+        // BOOL: single byte, non-zero -> 1.0
+        let bool_bytes = [1u8];
+        assert_eq!(decode(&bool_bytes, DataType::BOOL).unwrap(), 1.0);
+
+        // F32
+        let f32_bytes = 3.5f32.to_le_bytes();
+        assert_eq!(decode(&f32_bytes, DataType::F32).unwrap(), 3.5);
+
+        // F64 -> cast down to f32
+        let f64_bytes = 2.25f64.to_le_bytes();
+        assert_eq!(decode(&f64_bytes, DataType::F64).unwrap(), 2.25f32);
+
+        // F16
+        let f16_bytes = half::f16::from_f32(4.0).to_le_bytes();
+        assert_eq!(decode(&f16_bytes, DataType::F16).unwrap(), 4.0);
+
+        // I16
+        let i16_bytes = (-42i16).to_le_bytes();
+        assert_eq!(decode(&i16_bytes, DataType::I16).unwrap(), -42.0);
+
+        // I32
+        let i32_bytes = 12345i32.to_le_bytes();
+        assert_eq!(decode(&i32_bytes, DataType::I32).unwrap(), 12345.0);
+
+        // I64
+        let i64_bytes = (-987654321i64).to_le_bytes();
+        assert_eq!(decode(&i64_bytes, DataType::I64).unwrap(), -987654321.0);
+
+        // I8
+        let i8_bytes = (-7i8).to_le_bytes();
+        assert_eq!(decode(&i8_bytes, DataType::I8).unwrap(), -7.0);
+
+        // U8
+        let u8_bytes = [200u8];
+        assert_eq!(decode(&u8_bytes, DataType::U8).unwrap(), 200.0);
+    }
+
+    #[test]
+    fn test_decode_fails_on_wrong_chunk_length() {
+        // F32 expects exactly 4 bytes; give it 3.
+        let bad_chunk = [0u8, 1u8, 2u8];
+        let result = decode(&bad_chunk, DataType::F32);
+
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(
+            err.cause.contains("Bytes to F32 conversion error"),
+            "unexpected error message: {}",
+            err.cause
+        );
+    }
+
+    #[test]
+    #[cfg(feature = "tokenizers")]
+    fn test_token_map_populated() {
+        let mut model = StaticEmbedding::from_dir("testfiles/", None)
+            .expect("Should be able to load model from testfiles");
+        let _ = model.embed_text("hello there!", None);
+        assert!(model.token_map.len() > 0);
+        // token for 'hello'
+        assert!(model.token_map.contains_key(&6598))
+    }
+
+    #[test]
+    #[cfg(feature = "tokenizers")]
+    fn test_truncate_input_text() {
+        let mut model = StaticEmbedding::from_dir("testfiles/", None)
+            .expect("Should be able to load model from testfiles");
+        model
+            .load_tokenizer()
+            .expect("Should load tokenizer without problems");
+        let original = "this is a very very long text";
+        let truncated = model.truncate_input(original, 3);
+        assert!(original.len() > truncated.len())
+    }
+
+    #[test]
+    #[cfg(feature = "tokenizers")]
+    fn test_truncate_input_text_no_truncate() {
+        let mut model = StaticEmbedding::from_dir("testfiles/", None)
+            .expect("Should be able to load model from testfiles");
+        model
+            .load_tokenizer()
+            .expect("Should load tokenizer without problems");
+        let original = "this is a very very long text";
+        let truncated = model.truncate_input(original, 30);
+        assert!(original.len() == truncated.len())
     }
 }

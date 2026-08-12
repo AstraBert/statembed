@@ -20,6 +20,7 @@ hf-hub = ["dep:hf-hub", "dep:dirs"]
 [dev-dependencies]
 model2vec-rs = "0.2"
 criterion = { version = "0.8", features = ["html_reports"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 
 [[bench]]
 name = "embed_benchmark"
