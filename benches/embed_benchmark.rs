@@ -1,5 +1,5 @@
 use criterion::{Criterion, criterion_group, criterion_main};
-use statemebed::StaticEmbedding;
+use statembed::StaticEmbedding;
 use std::hint::black_box;
 
 const TO_EMBED: &[(&str, &str)] = &[

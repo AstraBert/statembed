@@ -1,9 +1,18 @@
+//! Tokenization utilities for the `statemebed` library.
+//!
+//! This module provides helpers for loading Hugging Face `tokenizers` JSON files,
+//! encoding text, and extracting vocabulary statistics such as median token length.
+
 use std::path::PathBuf;
 
 use tokenizers::Tokenizer;
 
 use crate::errors::TokenizationError;
 
+/// Loads a `Tokenizer` from a JSON file on disk.
+///
+/// # Arguments
+/// * `path` - Path to the `tokenizer.json` file.
 pub fn load_tokenizer(path: impl Into<PathBuf>) -> Result<Tokenizer, TokenizationError> {
     let tokenizer = Tokenizer::from_file(path.into()).map_err(|e| TokenizationError {
         cause: e.to_string(),
@@ -11,13 +20,19 @@ pub fn load_tokenizer(path: impl Into<PathBuf>) -> Result<Tokenizer, Tokenizatio
     Ok(tokenizer)
 }
 
+/// Encodes a string into a vector of token IDs.
+///
+/// # Arguments
+/// * `tk` - The tokenizer to use.
+/// * `text` - The input text to encode.
+/// * `unknown_token` - If provided, token IDs matching this value are filtered out.
 pub fn tokenize(
     tk: &Tokenizer,
     text: &str,
     unknown_token: Option<u32>,
 ) -> Result<Vec<u32>, TokenizationError> {
     let encoding = tk.encode(text, false).map_err(|e| TokenizationError {
-        cause: format!("Error while encoding text: {}", e.to_string()),
+        cause: format!("Error while encoding text: {}", e),
     })?;
     let mut ids = encoding.get_ids().to_vec();
     if let Some(unk_id) = unknown_token {
@@ -26,6 +41,11 @@ pub fn tokenize(
     Ok(ids.to_vec())
 }
 
+/// Extracts useful statistics from a tokenizer's vocabulary.
+///
+/// Returns a tuple of `(median_token_length, unknown_token_id)` where:
+/// * `median_token_length` - The median length (in bytes) of all vocabulary tokens.
+/// * `unknown_token_id` - The ID of the `unk_token` if one is defined in the model config.
 pub fn extract_tokenizer_details(
     tk: &Tokenizer,
 ) -> Result<(usize, Option<u32>), TokenizationError> {

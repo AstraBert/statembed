@@ -1,10 +1,15 @@
 [package]
-name = "statemebed"
+name = "statembed"
 version = "0.1.0"
 edition = "2024"
+license = "MIT"
+readme = "README.md"
+repository = "https://github.com/AstraBert/statembed"
+description = "Fast, lightweight static text embeddings for Rust"
+keywords = ["static-embeddings", "retrieval", "rust", "huggingface", "tokenizers"]
 
 [dependencies]
-memmap2 = "0.9"
+memmap2 = { version = "0.9", optional = true }
 half = "2.7"
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
@@ -16,6 +21,7 @@ dirs = { version = "6", optional = true }
 default = ["tokenizers"]
 tokenizers = ["dep:tokenizers"]
 hf-hub = ["dep:hf-hub", "dep:dirs"]
+mmap = ["dep:memmap2"]
 
 [dev-dependencies]
 model2vec-rs = "0.2"

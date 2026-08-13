@@ -1,3 +1,18 @@
+//! `statemebed`: Fast, lightweight static text embeddings.
+//!
+//! This library loads pre-trained static embedding models stored in the
+//! Safetensors format and optionally tokenizes input text using Hugging Face
+//! `tokenizers`. Embeddings are produced via mean-pooling over token-level
+//! vectors and can optionally be L2-normalized.
+//!
+//! # Example
+//! ```no_run
+//! use statemebed::StaticEmbedding;
+//!
+//! let mut model = StaticEmbedding::from_dir("./my-model", Some(true)).unwrap();
+//! let embedding = model.embed_text("hello world", None).unwrap();
+//! ```
+
 #[cfg(feature = "tokenizers")]
 use crate::tokenize::tokenize;
 #[cfg(feature = "tokenizers")]
@@ -21,11 +36,15 @@ mod load;
 #[cfg(feature = "tokenizers")]
 mod tokenize;
 
+/// Files that are downloaded when fetching a model from the Hugging Face Hub.
 #[cfg(feature = "hf-hub")]
 pub const DOWNLOAD_FILES: &[&str] = &["model.safetensors", "tokenizer.json"];
+/// Global cache directory for models downloaded from the Hugging Face Hub.
 #[cfg(feature = "hf-hub")]
 pub static HF_CACHE_DIR: OnceLock<PathBuf> = OnceLock::new();
 
+/// Returns the global Hugging Face cache directory
+/// for statembed (`~/.statembed`)
 #[cfg(feature = "hf-hub")]
 pub fn hf_cache_dir() -> &'static PathBuf {
     HF_CACHE_DIR.get_or_init(|| {
@@ -35,6 +54,7 @@ pub fn hf_cache_dir() -> &'static PathBuf {
     })
 }
 
+/// Decodes a little-endian byte chunk into an `f32` value according to `dtype`.
 fn decode(chunk: &[u8], dtype: DataType) -> Result<f32, EmbedError> {
     let fl = match dtype {
         DataType::BF16 => half::bf16::from_le_bytes(chunk.try_into().map_err(|e| EmbedError {
@@ -75,6 +95,9 @@ fn decode(chunk: &[u8], dtype: DataType) -> Result<f32, EmbedError> {
     Ok(fl)
 }
 
+/// Performs mean-pooling over token embeddings extracted from a flat tensor buffer.
+///
+/// Token embeddings are cached in `token_map` to avoid re-decoding the same token.
 fn sequential_mean_pooling(
     tensor: &[u8],
     tokens: Vec<u32>,
@@ -117,9 +140,17 @@ fn sequential_mean_pooling(
     Ok(mean_pooled)
 }
 
+/// A static embedding model loaded from disk.
+///
+/// `StaticEmbedding` lazily loads the underlying tensor and tokenizer on first
+/// use, then caches them for subsequent calls. It supports mean-pooled
+/// embeddings with optional L2 normalization.
 pub struct StaticEmbedding {
+    /// Filesystem path to the model directory.
     pub base_path: PathBuf,
+    /// Metadata about the loaded tensor (shape, dtype, offsets).
     pub tensor_details: Option<TensorDetails>,
+    /// Whether to L2-normalize output embeddings.
     pub normalize: bool,
     tensor: Option<Vec<u8>>,
     #[cfg(feature = "tokenizers")]
@@ -132,6 +163,14 @@ pub struct StaticEmbedding {
 }
 
 impl StaticEmbedding {
+    /// Creates a `StaticEmbedding` from a local directory.
+    ///
+    /// The directory must contain at least `model.safetensors`. When the
+    /// `tokenizers` feature is enabled, `tokenizer.json` is also required.
+    ///
+    /// # Arguments
+    /// * `path` - Path to the model directory.
+    /// * `normalize` - If `Some(true)`, output embeddings will be L2-normalized.
     pub fn from_dir<T: AsRef<Path>>(
         path: T,
         normalize: Option<bool>,
@@ -168,6 +207,12 @@ impl StaticEmbedding {
         })
     }
 
+    /// Downloads a model from the Hugging Face Hub and returns a `StaticEmbedding`.
+    ///
+    /// # Arguments
+    /// * `model_id` - Hugging Face model identifier in `owner/repo_name` format.
+    /// * `normalize` - If `Some(true)`, output embeddings will be L2-normalized.
+    /// * `force_download` - If `true`, re-downloads files even if they already exist locally.
     #[cfg(feature = "hf-hub")]
     pub async fn from_hf_hub(
         model_id: &str,
@@ -218,6 +263,7 @@ impl StaticEmbedding {
         })
     }
 
+    /// Loads the `model.safetensors` tensor into memory.
     fn load_tensor(&mut self) -> Result<(), LoadError> {
         let (details, tensor) = load_safetensors_file(self.base_path.join("model.safetensors"))?;
         self.tensor = Some(tensor);
@@ -225,6 +271,7 @@ impl StaticEmbedding {
         Ok(())
     }
 
+    /// Loads the `tokenizer.json` and extracts vocabulary statistics.
     #[cfg(feature = "tokenizers")]
     fn load_tokenizer(&mut self) -> Result<(), TokenizationError> {
         use crate::tokenize::extract_tokenizer_details;
@@ -237,6 +284,10 @@ impl StaticEmbedding {
         Ok(())
     }
 
+    /// Generates an embedding for a pre-tokenized sequence of token IDs.
+    ///
+    /// The tensor is loaded lazily on first call. Embeddings are mean-pooled
+    /// and optionally normalized.
     pub fn embed_tokens(&mut self, tokens: Vec<u32>) -> Result<Vec<f32>, EmbedError> {
         if self.tensor.is_none() {
             self.load_tensor()?;
@@ -267,6 +318,9 @@ impl StaticEmbedding {
         })
     }
 
+    /// Truncates `text` to an approximate byte length based on the median token length.
+    ///
+    /// This is a fast, heuristic truncation that avoids running the full tokenizer.
     #[cfg(feature = "tokenizers")]
     fn truncate_input<'a>(&'a self, text: &'a str, max_token_length: usize) -> &'a str {
         text.char_indices()
@@ -278,6 +332,11 @@ impl StaticEmbedding {
             .map_or(text, |(byte_idx, _)| &text[..byte_idx])
     }
 
+    /// Tokenizes `input_text` and returns its embedding.
+    ///
+    /// The tokenizer and tensor are loaded lazily on first call. If
+    /// `max_token_length` is provided, the input is heuristically truncated
+    /// before tokenization.
     #[cfg(feature = "tokenizers")]
     pub fn embed_text(
         &mut self,
