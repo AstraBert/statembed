@@ -7,6 +7,12 @@ readme = "README.md"
 repository = "https://github.com/AstraBert/statembed"
 description = "Fast, lightweight static text embeddings for Rust"
 keywords = ["static-embeddings", "retrieval", "rust", "huggingface", "tokenizers"]
+include = [
+    "src/**/*",
+    "Cargo.toml",
+    "README.md",
+    "LICENSE",
+]
 
 [dependencies]
 memmap2 = { version = "0.9", optional = true }
