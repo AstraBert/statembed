@@ -25,6 +25,8 @@ use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 #[cfg(feature = "tokenizers")]
 use tokenizers::Tokenizer;
+#[cfg(feature = "simd")]
+use wide::f32x8;
 
 use crate::{
     errors::{EmbedError, InvalidModelOrPathError, LoadError},
@@ -95,9 +97,79 @@ fn decode(chunk: &[u8], dtype: DataType) -> Result<f32, EmbedError> {
     Ok(fl)
 }
 
+/// SIMD elementwise accumulate: `acc[..] += src[..]`, scalar remainder tail.
+#[cfg(feature = "simd")]
+fn simd_add_into(acc: &mut [f32], src: &[f32]) {
+    let len = acc.len();
+    let mut i = 0;
+    while i + 8 <= len {
+        let a = f32x8::from(<[f32; 8]>::try_from(&acc[i..i + 8]).unwrap());
+        let b = f32x8::from(<[f32; 8]>::try_from(&src[i..i + 8]).unwrap());
+        acc[i..i + 8].copy_from_slice(&(a + b).to_array());
+        i += 8;
+    }
+    for j in i..len {
+        acc[j] += src[j];
+    }
+}
+
+/// SIMD elementwise scalar divide: `v[..] /= n`, scalar remainder tail.
+#[cfg(feature = "simd")]
+fn simd_div_scalar(v: &mut [f32], n: f32) {
+    let nv = f32x8::splat(n);
+    let len = v.len();
+    let mut i = 0;
+    while i + 8 <= len {
+        let a = f32x8::from(<[f32; 8]>::try_from(&v[i..i + 8]).unwrap());
+        let result = (a / nv).to_array();
+        v[i..i + 8].copy_from_slice(&result);
+        i += 8;
+    }
+    for j in v.iter_mut().take(len).skip(i) {
+        *j /= n;
+    }
+}
+
+#[cfg(feature = "simd")]
+fn sequential_mean_pooling(
+    tensor: &[u8],
+    tokens: Vec<u32>,
+    dim: u64,
+    dtype: DataType,
+    dtype_size: usize,
+    token_map: &mut HashMap<u32, Vec<f32>>,
+) -> Result<Vec<f32>, EmbedError> {
+    let dim_usize = dim as usize;
+    let n = tokens.len() as f32;
+    let mut mean_pooled: Vec<f32> = vec![0f32; dim_usize];
+
+    for tok in tokens {
+        if let Some(cached) = token_map.get(&tok) {
+            simd_add_into(&mut mean_pooled, cached);
+            continue;
+        }
+
+        let start = (tok as u64) * dim * (dtype_size as u64);
+        let finish = start + (dim * (dtype_size as u64));
+        let tok_repr = &tensor[(start as usize)..(finish as usize)];
+
+        let mut decoded: Vec<f32> = Vec::with_capacity(dim_usize);
+        for tr in tok_repr.chunks(dtype_size) {
+            decoded.push(decode(tr, dtype)?);
+        }
+
+        simd_add_into(&mut mean_pooled, &decoded);
+        token_map.insert(tok, decoded);
+    }
+
+    simd_div_scalar(&mut mean_pooled, n);
+    Ok(mean_pooled)
+}
+
 /// Performs mean-pooling over token embeddings extracted from a flat tensor buffer.
 ///
 /// Token embeddings are cached in `token_map` to avoid re-decoding the same token.
+#[cfg(not(feature = "simd"))]
 fn sequential_mean_pooling(
     tensor: &[u8],
     tokens: Vec<u32>,

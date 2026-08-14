@@ -2499,6 +2499,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3944826ff8fa8093089aba3acb4ef44b9446a99a16f3bf4e74af3f77d340ab7d"
 
 [[package]]
+name = "safe_arch"
+version = "1.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3a52ec151f024d703f9fd65abb7cbe81e7cdb39f18917a3a37e3014470dc7c59"
+dependencies = [
+ "bytemuck",
+]
+
+[[package]]
 name = "safetensors"
 version = "0.5.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2746,6 +2755,7 @@ dependencies = [
  "serde_json",
  "tokenizers 0.23.1",
  "tokio",
+ "wide",
 ]
 
 [[package]]
@@ -3569,6 +3579,16 @@ dependencies = [
  "objc2-system-configuration",
  "wasite",
  "web-sys",
+]
+
+[[package]]
+name = "wide"
+version = "1.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "de2aaf408e58689c2096682331b1f42bb2d9f2ed6b11560407d023cd0a6c634e"
+dependencies = [
+ "bytemuck",
+ "safe_arch",
 ]
 
 [[package]]
