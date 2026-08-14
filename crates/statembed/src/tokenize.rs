@@ -39,7 +39,7 @@ pub fn load_tokenizer(
     let reader = BufReader::new(file);
     let spec: TokenizerSpec = serde_json::from_reader(reader)?;
 
-    let tokenizer = Tokenizer::from_file(&p).map_err(|e| TokenizationError {
+    let tokenizer = Tokenizer::from_json(&p).map_err(|e| TokenizationError {
         cause: e.to_string(),
     })?;
 

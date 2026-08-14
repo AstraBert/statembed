@@ -71,5 +71,5 @@ docs/_build/
 # Pyenv
 .python-version
 
-!src/bin/stub_gen.rs
+!src/bin/
 *.pyi
