@@ -45,6 +45,15 @@ pub struct TokenizationError {
 }
 
 #[cfg(feature = "tokenizers")]
+impl From<io::Error> for TokenizationError {
+    fn from(value: io::Error) -> Self {
+        Self {
+            cause: format!("IO Error: {}. Details: {}", value.kind(), value),
+        }
+    }
+}
+
+#[cfg(feature = "tokenizers")]
 impl From<serde_json::Error> for TokenizationError {
     fn from(value: serde_json::Error) -> Self {
         Self {
