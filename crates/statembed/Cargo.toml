@@ -1,0 +1,45 @@
+[package]
+name = "statembed"
+version = "0.1.1"
+edition = "2024"
+license = "MIT"
+readme = "README.md"
+repository = "https://github.com/AstraBert/statembed"
+description = "Fast, lightweight static text embeddings for Rust"
+keywords = ["static-embeddings", "retrieval", "rust", "huggingface", "tokenizers"]
+include = [
+    "src/**/*",
+    "Cargo.toml",
+    "README.md",
+    "LICENSE",
+]
+
+[dependencies]
+memmap2 = { version = "0.9", optional = true }
+half = "2.7"
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order"] }
+tokie = { version = "0.1", optional = true }
+hf-hub = { version = "1.0.0", optional = true }
+dirs = { version = "6", optional = true }
+wide = { version = "1.6.1", optional = true }
+
+[features]
+default = ["tokenizers", "simd"]
+tokenizers = ["dep:tokie"]
+hf-hub = ["dep:hf-hub", "dep:dirs"]
+mmap = ["dep:memmap2"]
+simd = ["dep:wide"]
+
+[dev-dependencies]
+model2vec-rs = "0.2"
+criterion = { version = "0.8", features = ["html_reports"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+
+[[bench]]
+name = "embed_benchmark"
+harness = false
+
+[[bench]]
+name = "m2vec_benchmark"
+harness = false

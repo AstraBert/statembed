@@ -21,10 +21,12 @@ use crate::{errors::TokenizationError, tokenize::load_tokenizer};
 use hf_hub::{HFClient, RepoTypeModel};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+#[cfg(feature = "tokenizers")]
+use std::sync::Arc;
 #[cfg(feature = "hf-hub")]
 use std::sync::OnceLock;
 #[cfg(feature = "tokenizers")]
-use tokenizers::Tokenizer;
+use tokie::Tokenizer;
 #[cfg(feature = "simd")]
 use wide::f32x8;
 
@@ -217,6 +219,7 @@ fn sequential_mean_pooling(
 /// `StaticEmbedding` lazily loads the underlying tensor and tokenizer on first
 /// use, then caches them for subsequent calls. It supports mean-pooled
 /// embeddings with optional L2 normalization.
+#[derive(Clone)]
 pub struct StaticEmbedding {
     /// Filesystem path to the model directory.
     pub base_path: PathBuf,
@@ -226,7 +229,7 @@ pub struct StaticEmbedding {
     pub normalize: bool,
     tensor: Option<Vec<u8>>,
     #[cfg(feature = "tokenizers")]
-    tokenizer: Option<Tokenizer>,
+    tokenizer: Option<Arc<Tokenizer>>,
     #[cfg(feature = "tokenizers")]
     median_token_length: Option<usize>,
     #[cfg(feature = "tokenizers")]
@@ -348,9 +351,9 @@ impl StaticEmbedding {
     fn load_tokenizer(&mut self) -> Result<(), TokenizationError> {
         use crate::tokenize::extract_tokenizer_details;
 
-        let tokenizer = load_tokenizer(self.base_path.join("tokenizer.json"))?;
-        let (median_length, unk_tok) = extract_tokenizer_details(&tokenizer)?;
-        self.tokenizer = Some(tokenizer);
+        let (tokenizer, unk_tok) = load_tokenizer(self.base_path.join("tokenizer.json"))?;
+        let median_length = extract_tokenizer_details(&tokenizer);
+        self.tokenizer = Some(Arc::new(tokenizer));
         self.median_token_length = Some(median_length);
         self.unknown_token = unk_tok;
         Ok(())

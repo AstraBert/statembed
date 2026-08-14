@@ -1,0 +1,17 @@
+[package]
+name = "statembed-py"
+version = "0.1.0"
+edition = "2024"
+readme = "README.md"
+license = "MIT"
+description = "Fast, lightweight static text embeddings for Python"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+[lib]
+name = "statembed_py"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+pyo3 = "0.29.0"
+pyo3-stub-gen = "0.23.0"
+statembed = { version = "0.1", path = "../statembed", default-features=false, features=["simd"] }

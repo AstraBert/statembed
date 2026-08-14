@@ -164,7 +164,7 @@ jobs:
           CARGO_API_TOKEN: ${{ secrets.CARGO_API_TOKEN }}
 
       - name: Publish to crates
-        run: cargo publish
+        run: cargo publish -p statembed
         env:
           CARGO_API_TOKEN: ${{ secrets.CARGO_API_TOKEN }}
 
