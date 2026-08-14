@@ -50,7 +50,7 @@ fn test_embedding_equality_w_norm() {
 #[cfg(feature = "hf-hub")]
 #[tokio::test]
 async fn test_load_from_hf_hub() {
-    use statemebed::hf_cache_dir;
+    use statembed::hf_cache_dir;
 
     let model = StaticEmbedding::from_hf_hub("erikkaum/lattice-retrieval", None, true)
         .await

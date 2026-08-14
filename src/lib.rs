@@ -1,4 +1,4 @@
-//! `statemebed`: Fast, lightweight static text embeddings.
+//! `statembed`: Fast, lightweight static text embeddings.
 //!
 //! This library loads pre-trained static embedding models stored in the
 //! Safetensors format and optionally tokenizes input text using Hugging Face

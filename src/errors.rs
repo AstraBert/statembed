@@ -1,4 +1,4 @@
-//! Error types for the `statemebed` library.
+//! Error types for the `statembed` library.
 //!
 //! This module defines the various error types that can occur when loading
 //! models, tokenizing text, or generating embeddings.

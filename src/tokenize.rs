@@ -1,4 +1,4 @@
-//! Tokenization utilities for the `statemebed` library.
+//! Tokenization utilities for the `statembed` library.
 //!
 //! This module provides helpers for loading Hugging Face `tokenizers` JSON files,
 //! encoding text, and extracting vocabulary statistics such as median token length.
