@@ -6,8 +6,8 @@
 //! vectors and can optionally be L2-normalized.
 //!
 //! # Example
-//! ```no_run
-//! use statemebed::StaticEmbedding;
+//! ```ignore
+//! use statembed::StaticEmbedding;
 //!
 //! let mut model = StaticEmbedding::from_dir("./my-model", Some(true)).unwrap();
 //! let embedding = model.embed_text("hello world", None).unwrap();
