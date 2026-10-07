@@ -117,12 +117,6 @@ cargo bench -p statembed --features rayon --bench embed_benchmark   # parallel p
 
 `init_benchmark` and `components_benchmark` also use the 32M and 128M models in `testfiles/init_benches/32M` and `testfiles/init_benches/128M`. Those files are too large for the repository and are ignored by git. A model that is not on disk is skipped.
 
-To run everything, with and without `rayon`, and print one comparison table (including `model2vec-rs`), use the script from the repository root:
-
-```bash
-scripts/run_benches.sh [--quick] [--skip-m2vec] [--summary-only]
-```
-
 ## License
 
 MIT

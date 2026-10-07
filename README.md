@@ -62,6 +62,22 @@ cargo test
 cargo bench -p statembed   # compares against model2vec-rs
 ```
 
+## Benchmarks
+
+`statembed` is compared against [`model2vec-rs`](https://github.com/MinishLab/model2vec-rs) (Rust) and [`model2vec`](https://github.com/MinishLab/model2vec) (Python) on `minishlab/potion-base-8M`, on single texts and on batches, with and without normalization. In our runs it is roughly 3 to 7 times faster on single texts and about 3 times faster on batches. See [`pages/index.html`](pages/index.html) for the full comparison.
+
+```bash
+# Rust (Criterion)
+cargo bench -p statembed --bench m2vec_benchmark   # model2vec-rs
+cargo bench -p statembed --bench embed_benchmark   # statembed
+cargo bench -p statembed --features rayon --bench embed_benchmark   # statembed with parallel pooling
+
+# Python (single uv script, builds statembed-py from this repo)
+uv run crates/statembed-py/benches/bench_vs_model2vec.py
+```
+
+Results depend on the machine, so run the benchmarks on your own hardware before drawing conclusions. The Rust benchmarks are described in [`crates/statembed/README.md`](crates/statembed/README.md#benchmarks).
+
 ## License
 
 MIT
