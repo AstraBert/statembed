@@ -22,7 +22,7 @@ This repository is a Cargo workspace with two crates:
 
 ```toml
 [dependencies]
-statembed = "0.1"
+statembed = "1"
 ```
 
 ```rust
