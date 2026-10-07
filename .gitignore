@@ -1,1 +1,3 @@
 /target
+crates/statembed/testfiles/init_benches/
+crates/statembed/testfiles/tokenizer.v2.json

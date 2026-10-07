@@ -7,11 +7,11 @@ on:
     tags:
       - "rust@**"
     paths:
-      - "src/**"
+      - "crates/**"
       - ".github/workflows/ci.yml"
   pull_request:
     paths:
-      - "src/**"
+      - "crates/**"
       - ".github/workflows/ci.yml"
 env:
   CARGO_TERM_COLOR: always
@@ -89,9 +89,6 @@ jobs:
       - name: Run tests (default features)
         run: jake test
 
-      - name: Run tests (mmap)
-        run: jake test-mmap
-
       - name: Run tests (hf-hub)
         run: jake test-hf
 
@@ -122,9 +119,6 @@ jobs:
 
       - name: Run tests (default features)
         run: cargo test --release
-
-      - name: Run tests (mmap)
-        run: cargo test --features mmap --release
 
       - name: Run tests (hf-hub)
         run: cargo test --features hf-hub --release

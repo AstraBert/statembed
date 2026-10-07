@@ -20,29 +20,29 @@ fn get_m2v_model(norm: bool) -> &'static StaticModel {
 }
 
 #[test]
-#[cfg(feature = "tokenizers")]
 fn test_embedding_equality() {
-    let fixture_sentence = "hello world! this is a long sentence that both embedding model should embed in the same way";
+    // the crab emoji is not in the vocabulary, so it becomes an unknown token
+    let fixture_sentence = "hello \u{1F980} world! this is a long sentence that both embedding model should embed in the same way";
     let m2v_model = get_m2v_model(false);
-    let mut st_model =
-        StaticEmbedding::from_dir("testfiles/", Some(false)).expect("Should be able to load model");
+    let mut st_model = StaticEmbedding::from_dir("testfiles/", Some(false), None, None)
+        .expect("Should be able to load model");
     let m2v_encoded = m2v_model.encode_single(fixture_sentence);
     let st_encoded = st_model
-        .embed_text(fixture_sentence, None)
+        .embed_text(fixture_sentence)
         .expect("Should be able to embed text");
     assert_eq!(m2v_encoded, st_encoded);
 }
 
 #[test]
-#[cfg(feature = "tokenizers")]
 fn test_embedding_equality_w_norm() {
-    let fixture_sentence = "hello world! this is a long sentence that both embedding model should embed in the same way";
+    // the crab emoji is not in the vocabulary, so it becomes an unknown token
+    let fixture_sentence = "hello \u{1F980} world! this is a long sentence that both embedding model should embed in the same way";
     let m2v_model = get_m2v_model(true);
-    let mut st_model =
-        StaticEmbedding::from_dir("testfiles/", Some(true)).expect("Should be able to load model");
+    let mut st_model = StaticEmbedding::from_dir("testfiles/", Some(true), None, None)
+        .expect("Should be able to load model");
     let m2v_encoded = m2v_model.encode_single(fixture_sentence);
     let st_encoded = st_model
-        .embed_text(fixture_sentence, None)
+        .embed_text(fixture_sentence)
         .expect("Should be able to embed text");
     assert_eq!(m2v_encoded, st_encoded);
 }
@@ -52,7 +52,7 @@ fn test_embedding_equality_w_norm() {
 async fn test_load_from_hf_hub() {
     use statembed::hf_cache_dir;
 
-    let model = StaticEmbedding::from_hf_hub("erikkaum/lattice-retrieval", None, true)
+    let model = StaticEmbedding::from_hf_hub("erikkaum/lattice-retrieval", None, true, None, None)
         .await
         .expect("Should download the model successfully");
     assert_eq!(

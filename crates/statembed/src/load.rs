@@ -1,17 +1,20 @@
 //! Utilities for loading Safetensors model files.
 //!
 //! This module handles reading the binary Safetensors format, extracting tensor
-//! metadata, and returning the raw tensor bytes. It supports both memory-mapped
-//! and standard file I/O via feature flags.
+//! metadata, and returning the raw tensor bytes. Files are memory-mapped, so the
+//! tensor bytes are not copied: the operating system reads a page from disk the
+//! first time it is used.
 
-use std::{fs::File, path::PathBuf};
+use std::{
+    fs::File,
+    ops::{Deref, Range},
+    path::PathBuf,
+    sync::Arc,
+};
 
 use crate::errors::LoadError;
-#[cfg(feature = "mmap")]
 use memmap2::Mmap;
 use serde::{Deserialize, Serialize};
-#[cfg(not(feature = "mmap"))]
-use std::io::Read;
 
 /// Supported data types for tensor elements.
 #[allow(clippy::upper_case_acronyms)]
@@ -48,6 +51,24 @@ impl DataType {
     }
 }
 
+/// The raw bytes of a tensor, borrowed from a memory-mapped Safetensors file.
+///
+/// It owns the mapping (through an `Arc`, so clones share it) and dereferences to the
+/// bytes of the tensor only, without the file header. The file is unmapped when the
+/// last clone is dropped.
+#[derive(Debug, Clone)]
+pub struct TensorBytes {
+    mmap: Arc<Mmap>,
+    range: Range<usize>,
+}
+
+impl Deref for TensorBytes {
+    type Target = [u8];
+    fn deref(&self) -> &[u8] {
+        &self.mmap[self.range.clone()]
+    }
+}
+
 /// Metadata describing a single tensor inside a Safetensors file.
 #[derive(Debug, Serialize, Deserialize, Clone, Copy, Eq, PartialEq)]
 pub struct TensorDetails {
@@ -78,45 +99,72 @@ fn header_to_details(header: &[u8]) -> Result<TensorDetails, LoadError> {
     })
 }
 
+/// Number of bytes at the start of a Safetensors file that give the size of the JSON header.
+const HEADER_SIZE_BYTES: usize = size_of::<u64>();
+
 /// Loads a Safetensors file using memory mapping.
 ///
-/// Returns the tensor metadata and a copy of the raw tensor bytes.
-#[cfg(feature = "mmap")]
-pub fn load_safetensors_file(
-    path: impl Into<PathBuf>,
-) -> Result<(TensorDetails, Vec<u8>), LoadError> {
-    let file = File::open(path.into())?;
-    let mmap = unsafe { Mmap::map(&file)? };
-    let (header_size_bytes, rest) = mmap.split_at(size_of::<u64>());
-    let header_size = u64::from_le_bytes(header_size_bytes.try_into().map_err(|e| LoadError {
-        cause: format!("Could not parse the first 8 bytes to u64 integer: {}", e),
-    })?);
-    let (json_str, rest_tensor) = rest.split_at(header_size as usize);
-    let details = header_to_details(json_str)?;
-    let tensor =
-        &rest_tensor[(details.data_offsets[0] as usize)..(details.data_offsets[1] as usize)];
-    Ok((details, tensor.to_vec()))
-}
-
-/// Loads a Safetensors file using standard file I/O.
+/// Returns the tensor metadata and the tensor bytes, which are not copied: they are read
+/// from disk when first used. Returns an error if the file is too short or if the header
+/// or the tensor offsets do not fit in the file.
 ///
-/// Returns the tensor metadata and a copy of the raw tensor bytes.
-#[cfg(not(feature = "mmap"))]
+/// The file must not be modified or truncated by another process while it is mapped.
 pub fn load_safetensors_file(
     path: impl Into<PathBuf>,
-) -> Result<(TensorDetails, Vec<u8>), LoadError> {
-    let mut file = File::open(path.into())?;
-    let mut content: Vec<u8> = vec![];
-    file.read_to_end(&mut content)?;
-    let (header_size_bytes, rest) = content.split_at(size_of::<u64>());
+) -> Result<(TensorDetails, TensorBytes), LoadError> {
+    let file = File::open(path.into())?;
+    // SAFETY: the mapping is only read. Modifying the file while it is mapped is
+    // not supported (see the function documentation).
+    let mmap = unsafe { Mmap::map(&file)? };
+    let file_len = mmap.len();
+
+    let header_size_bytes = mmap.get(..HEADER_SIZE_BYTES).ok_or_else(|| LoadError {
+        cause: format!(
+            "File is too short ({file_len} bytes) to contain the size of the safetensors header"
+        ),
+    })?;
     let header_size = u64::from_le_bytes(header_size_bytes.try_into().map_err(|e| LoadError {
         cause: format!("Could not parse the first 8 bytes to u64 integer: {}", e),
     })?);
-    let (json_str, rest_tensor) = rest.split_at(header_size as usize);
-    let details = header_to_details(json_str)?;
-    let tensor =
-        &rest_tensor[(details.data_offsets[0] as usize)..(details.data_offsets[1] as usize)];
-    Ok((details, tensor.to_vec()))
+    let header_end = usize::try_from(header_size)
+        .ok()
+        .and_then(|size| size.checked_add(HEADER_SIZE_BYTES))
+        .filter(|end| *end <= file_len)
+        .ok_or_else(|| LoadError {
+            cause: format!(
+                "Safetensors header size ({header_size} bytes) does not fit in a file of {file_len} bytes"
+            ),
+        })?;
+    let details = header_to_details(&mmap[HEADER_SIZE_BYTES..header_end])?;
+
+    // offsets in the header are relative to the end of the header
+    let absolute = |offset: u64| {
+        usize::try_from(offset)
+            .ok()
+            .and_then(|offset| header_end.checked_add(offset))
+    };
+    let [start_offset, end_offset] = details.data_offsets;
+    let (Some(start), Some(end)) = (absolute(start_offset), absolute(end_offset)) else {
+        return Err(LoadError {
+            cause: format!(
+                "Tensor offsets [{start_offset}, {end_offset}) overflow the address space"
+            ),
+        });
+    };
+    if end > file_len || start > end {
+        return Err(LoadError {
+            cause: format!(
+                "Tensor bytes [{start}, {end}) do not fit in a file of {file_len} bytes"
+            ),
+        });
+    }
+    Ok((
+        details,
+        TensorBytes {
+            mmap: Arc::new(mmap),
+            range: Range { start, end },
+        },
+    ))
 }
 
 #[cfg(test)]
@@ -138,5 +186,60 @@ mod tests {
             tensor.len() as u64,
             expected_details.data_offsets[1] - expected_details.data_offsets[0]
         );
+    }
+
+    /// Writes `bytes` to a file in the temp directory and returns its path.
+    fn write_temp_file(name: &str, bytes: &[u8]) -> PathBuf {
+        let path = std::env::temp_dir().join(format!("statembed_{}_{name}", std::process::id()));
+        std::fs::write(&path, bytes).expect("Should write the temp file");
+        path
+    }
+
+    /// A safetensors file made of the header size, the header, and `data`.
+    fn safetensors_bytes(header: &str, data: &[u8]) -> Vec<u8> {
+        let mut bytes = (header.len() as u64).to_le_bytes().to_vec();
+        bytes.extend(header.as_bytes());
+        bytes.extend(data);
+        bytes
+    }
+
+    #[test]
+    fn test_load_safetensors_too_short_file_fails() {
+        let path = write_temp_file("too_short", &[1, 2, 3]);
+        let err = load_safetensors_file(&path).unwrap_err();
+        std::fs::remove_file(&path).ok();
+        assert!(err.cause.contains("too short"), "{}", err.cause);
+    }
+
+    #[test]
+    fn test_load_safetensors_header_larger_than_file_fails() {
+        let mut bytes = u64::MAX.to_le_bytes().to_vec();
+        bytes.extend(b"{}");
+        let path = write_temp_file("big_header", &bytes);
+        let err = load_safetensors_file(&path).unwrap_err();
+        std::fs::remove_file(&path).ok();
+        assert!(err.cause.contains("header size"), "{}", err.cause);
+    }
+
+    #[test]
+    fn test_load_safetensors_offsets_beyond_file_fails() {
+        let header = r#"{"embeddings":{"dtype":"F32","shape":[2,2],"data_offsets":[0,16]}}"#;
+        // only 8 bytes of data for a tensor that claims 16
+        let path = write_temp_file("short_data", &safetensors_bytes(header, &[0u8; 8]));
+        let err = load_safetensors_file(&path).unwrap_err();
+        std::fs::remove_file(&path).ok();
+        assert!(err.cause.contains("do not fit"), "{}", err.cause);
+    }
+
+    #[test]
+    fn test_load_safetensors_huge_offsets_fail_without_overflow() {
+        let header = format!(
+            r#"{{"embeddings":{{"dtype":"F32","shape":[2,2],"data_offsets":[0,{}]}}}}"#,
+            u64::MAX
+        );
+        let path = write_temp_file("huge_offsets", &safetensors_bytes(&header, &[0u8; 16]));
+        let err = load_safetensors_file(&path).unwrap_err();
+        std::fs::remove_file(&path).ok();
+        assert!(err.cause.contains("overflow"), "{}", err.cause);
     }
 }

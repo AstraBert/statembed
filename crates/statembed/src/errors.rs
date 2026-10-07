@@ -38,13 +38,11 @@ impl Display for LoadError {
 
 /// An error that occurred during text tokenization or tokenizer loading.
 #[derive(Debug)]
-#[cfg(feature = "tokenizers")]
 pub struct TokenizationError {
     /// Human-readable description of what went wrong.
     pub cause: String,
 }
 
-#[cfg(feature = "tokenizers")]
 impl From<io::Error> for TokenizationError {
     fn from(value: io::Error) -> Self {
         Self {
@@ -53,7 +51,6 @@ impl From<io::Error> for TokenizationError {
     }
 }
 
-#[cfg(feature = "tokenizers")]
 impl From<serde_json::Error> for TokenizationError {
     fn from(value: serde_json::Error) -> Self {
         Self {
@@ -62,10 +59,16 @@ impl From<serde_json::Error> for TokenizationError {
     }
 }
 
-#[cfg(feature = "tokenizers")]
+impl From<tokenizers::ConvertError> for TokenizationError {
+    fn from(value: tokenizers::ConvertError) -> Self {
+        Self {
+            cause: format!("v1 to v2 conversion error for tokenizer: {}", value),
+        }
+    }
+}
+
 impl std::error::Error for TokenizationError {}
 
-#[cfg(feature = "tokenizers")]
 impl Display for TokenizationError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.cause)
@@ -106,7 +109,6 @@ impl From<LoadError> for EmbedError {
     }
 }
 
-#[cfg(feature = "tokenizers")]
 impl From<TokenizationError> for EmbedError {
     fn from(value: TokenizationError) -> Self {
         Self { cause: value.cause }

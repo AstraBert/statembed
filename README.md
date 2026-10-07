@@ -9,14 +9,14 @@ This repository is a Cargo workspace with two crates:
 | Crate | Language | Description |
 |-------|----------|--------------|
 | [`statembed`](crates/statembed) | Rust | Core library: model loading, tokenization, pooling, normalization. |
-| [`statembed-py`](crates/statembed-py) | Python (via [PyO3](https://pyo3.rs)) | Python bindings exposing embedding from pre-tokenized input. |
+| [`statembed-py`](crates/statembed-py) | Python (via [PyO3](https://pyo3.rs)) | Python bindings: embed texts, or pre-tokenized token IDs. |
 
 ## How it works
 
-1. **Lazy loading** — the model tensor (and tokenizer, in Rust) are loaded from disk on the first embedding call, then cached in memory.
+1. **Lazy loading** — the model file is memory-mapped and the tokenizer is loaded on the first embedding call (or on `init()`), then kept in memory.
 2. **Mean pooling** — each token ID maps to a row in the embedding matrix; the rows for all tokens in the input are averaged into a single fixed-length vector.
 3. **Optional normalization** — when enabled, the resulting vector is L2-normalized.
-4. **Token caching** — decoded token vectors are cached so repeated tokens across calls don't need to be re-decoded.
+4. **Decoded table** — the embedding matrix is decoded to a flat `f32` table, either entirely at load time (small models) or row by row the first time a token is seen (large models).
 
 ## Rust: `statembed`
 
@@ -28,11 +28,11 @@ statembed = "0.1"
 ```rust
 use statembed::StaticEmbedding;
 
-let mut model = StaticEmbedding::from_dir("./my-model", Some(true))?;
-let embedding = model.embed_text("hello world", None)?;
+let mut model = StaticEmbedding::from_dir("./my-model", Some(true), None, None)?;
+let embedding = model.embed_text("hello world")?;
 ```
 
-The model directory must contain `model.safetensors`, plus `tokenizer.json` if using the (default) `tokenizers` feature to embed raw text. Models can also be downloaded directly from the Hugging Face Hub with the `hf-hub` feature. See [`crates/statembed/README.md`](crates/statembed/README.md) for the full feature list (`tokenizers`, `hf-hub`, `mmap`, `simd`) and API details.
+The model directory must contain `model.safetensors` and `tokenizer.json`. Models can also be downloaded directly from the Hugging Face Hub with the `hf-hub` feature. See [`crates/statembed/README.md`](crates/statembed/README.md) for the full feature list (`simd`, `hf-hub`, `rayon`) and API details.
 
 ## Python: `statembed-py`
 
@@ -40,18 +40,15 @@ The model directory must contain `model.safetensors`, plus `tokenizer.json` if u
 uv add statembed-py
 ```
 
-Python bindings embed pre-tokenized input only, so you need to pair them with a tokenizer library such as [`tokenizers`](https://pypi.org/project/tokenizers/):
-
 ```python
-from tokenizers import Tokenizer
 from statembed_py import StaticEmbedding
 
-model = StaticEmbedding(model_dir="./my-model")  # must contain model.safetensors
-tokenizer = Tokenizer.from_file("./my-model/tokenizer.json")
-
-tokens = tokenizer.encode("hello world").ids
-embedding = model.embed_tokens(tokens)
+model = StaticEmbedding(model_dir="./my-model")  # must contain model.safetensors and tokenizer.json
+embedding = model.embed_text("hello world")
+embeddings = model.embed_texts(["hello world", "goodbye world"])
 ```
+
+If you already tokenize your texts, you can pass token IDs with `embed_tokens` or `embed_tokens_batch`, using the tokenizer library you prefer.
 
 See [`crates/statembed-py/README.md`](crates/statembed-py/README.md) for installation options, building from source, and the full API.
 
