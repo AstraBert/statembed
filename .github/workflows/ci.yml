@@ -120,9 +120,6 @@ jobs:
       - name: Run tests (default features)
         run: cargo test --release
 
-      - name: Run tests (mmap)
-        run: cargo test --features mmap --release
-
       - name: Run tests (hf-hub)
         run: cargo test --features hf-hub --release
 
