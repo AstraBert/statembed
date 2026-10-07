@@ -925,6 +925,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(target_os = "linux")]
     fn test_outdated_second_tokenizer_file_is_not_used() {
         let dir = tokenizer_only_dir("outdated_second_file");
         StaticEmbedding::from_dir(&dir, None, None, None)
