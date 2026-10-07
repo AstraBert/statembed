@@ -1,4 +1,4 @@
-use criterion::{Criterion, criterion_group, criterion_main};
+use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use model2vec_rs::model::StaticModel;
 use std::hint::black_box;
 
@@ -95,5 +95,48 @@ fn bench_w_norm(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, bench_no_norm, bench_w_norm);
+/// Number of texts that are tokenized and pooled together.
+const BATCH_SIZE: usize = 16;
+/// Total number of texts embedded in each batch benchmark iteration.
+const BATCH_TOTALS: &[usize] = &[16, 64, 256];
+
+/// Builds `n` texts by cycling through `TO_EMBED`, so every length is represented.
+fn make_texts(n: usize) -> Vec<String> {
+    TO_EMBED
+        .iter()
+        .cycle()
+        .take(n)
+        .map(|(text, _)| text.to_string())
+        .collect()
+}
+
+fn bench_batch(c: &mut Criterion, group_name: &str, normalize: Option<bool>) {
+    let model = StaticModel::from_pretrained("minishlab/potion-base-8M", None, normalize, None)
+        .expect("Should be able to download model");
+    let mut group = c.benchmark_group(group_name);
+    for &n in BATCH_TOTALS {
+        let texts = make_texts(n);
+        group.throughput(Throughput::Elements(n as u64));
+        group.bench_with_input(BenchmarkId::from_parameter(n), &texts, |b, texts| {
+            b.iter(|| model.encode_with_args(black_box(texts), Some(512), BATCH_SIZE))
+        });
+    }
+    group.finish();
+}
+
+fn bench_batch_no_norm(c: &mut Criterion) {
+    bench_batch(c, "m2vec_batch_no_norm", Some(false));
+}
+
+fn bench_batch_w_norm(c: &mut Criterion) {
+    bench_batch(c, "m2vec_batch_w_norm", None);
+}
+
+criterion_group!(
+    benches,
+    bench_no_norm,
+    bench_w_norm,
+    bench_batch_no_norm,
+    bench_batch_w_norm
+);
 criterion_main!(benches);

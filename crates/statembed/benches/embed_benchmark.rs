@@ -1,4 +1,4 @@
-use criterion::{Criterion, criterion_group, criterion_main};
+use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use statembed::StaticEmbedding;
 use std::hint::black_box;
 
@@ -72,28 +72,74 @@ const TO_EMBED: &[(&str, &str)] = &[
 ];
 
 fn bench_no_norm(c: &mut Criterion) {
-    let mut model = StaticEmbedding::from_dir("testfiles/", Some(false))
+    let mut model = StaticEmbedding::from_dir("testfiles/", Some(false), None, None)
         .expect("Should load the model from directory");
+    model.init().expect("Model should be inited");
     let mut group = c.benchmark_group("statembed_no_norm");
     for i in TO_EMBED.iter() {
         group.bench_with_input(format!("bench no norm {}", i.1), i, |b, &n| {
-            b.iter(|| model.embed_text(black_box(n.0), black_box(None)))
+            b.iter(|| model.embed_text(black_box(n.0)))
         });
     }
     group.finish();
 }
 
 fn bench_w_norm(c: &mut Criterion) {
-    let mut model = StaticEmbedding::from_dir("testfiles/", Some(true))
+    let mut model = StaticEmbedding::from_dir("testfiles/", Some(true), None, None)
         .expect("Should load the model from directory");
+    model.init().expect("Model should be inited");
     let mut group = c.benchmark_group("statembed_w_norm");
     for i in TO_EMBED.iter() {
         group.bench_with_input(format!("bench w norm {}", i.1), i, |b, &n| {
-            b.iter(|| model.embed_text(black_box(n.0), black_box(None)))
+            b.iter(|| model.embed_text(black_box(n.0)))
         });
     }
     group.finish();
 }
 
-criterion_group!(benches, bench_no_norm, bench_w_norm);
+/// Number of texts that are tokenized and pooled together.
+const BATCH_SIZE: usize = 16;
+/// Total number of texts embedded in each batch benchmark iteration.
+const BATCH_TOTALS: &[usize] = &[16, 64, 256];
+
+/// Builds `n` texts by cycling through `TO_EMBED`, so every length is represented.
+fn make_texts(n: usize) -> Vec<&'static str> {
+    TO_EMBED
+        .iter()
+        .cycle()
+        .take(n)
+        .map(|(text, _)| *text)
+        .collect()
+}
+
+fn bench_batch(c: &mut Criterion, group_name: &str, normalize: bool) {
+    let mut model = StaticEmbedding::from_dir("testfiles/", Some(normalize), None, None)
+        .expect("Should load the model from directory");
+    model.init().expect("Model should be inited");
+    let mut group = c.benchmark_group(group_name);
+    for &n in BATCH_TOTALS {
+        let texts = make_texts(n);
+        group.throughput(Throughput::Elements(n as u64));
+        group.bench_with_input(BenchmarkId::from_parameter(n), &texts, |b, texts| {
+            b.iter(|| model.embed_texts(black_box(texts), black_box(Some(BATCH_SIZE))))
+        });
+    }
+    group.finish();
+}
+
+fn bench_batch_no_norm(c: &mut Criterion) {
+    bench_batch(c, "statembed_batch_no_norm", false);
+}
+
+fn bench_batch_w_norm(c: &mut Criterion) {
+    bench_batch(c, "statembed_batch_w_norm", true);
+}
+
+criterion_group!(
+    benches,
+    bench_no_norm,
+    bench_w_norm,
+    bench_batch_no_norm,
+    bench_batch_w_norm
+);
 criterion_main!(benches);
