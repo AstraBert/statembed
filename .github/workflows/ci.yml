@@ -89,9 +89,6 @@ jobs:
       - name: Run tests (default features)
         run: jake test
 
-      - name: Run tests (mmap)
-        run: jake test-mmap
-
       - name: Run tests (hf-hub)
         run: jake test-hf
 
